@@ -112,7 +112,8 @@ flowchart LR
 
 ### What's better than before
 
-Compared with the conversation app's original movement manager and head wobbler:
+Compared with the movement manager and head wobbler of the Hugging Face
+[Reachy Mini conversation app](https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app):
 
 | | Before | Now |
 |---|---|---|
@@ -155,6 +156,10 @@ Clip.from_sdk(sdk_move)               # any SDK Move, e.g. a DanceMove
 **One rate.** `fps` is both the control rate and the animation frame rate. Clips can be recorded at any rate.
 `play` resamples them to `fps` (smoothing first when downsampling), so timing is kept and every tick lands on a
 frame.
+
+**Motion only, no sound.** Pollen's emotion clips ship with a sound file next to each move. The SDK's
+`play_move(move, sound=True)` plays it. `Clip.load` reads only the motion, as the Hugging Face conversation app
+also did. Play the sound yourself if you want it, since audio belongs to whatever app owns the speaker.
 
 Need something else, like procedural motion or a stream from a generator? Any object with `name`,
 `duration` (use `math.inf` if it ends only when interrupted) and `sample(t) -> pose` can be played.
