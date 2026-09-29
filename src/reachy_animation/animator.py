@@ -98,22 +98,30 @@ class Animator:
         self._current: _Playing | None = None
         self._queue: deque[Motion] = deque()
         self._interrupt = False  # leave the current motion on the next tick
+        self._generation = 0  # bumped by every play-now and stop; a motion made for an older one is dropped
         self._closing = threading.Event()
         self._thread: threading.Thread | None = None
+        self._pose_callbacks: list[Callable[[Pose], None]] = []
 
-    def play(self, motion: Motion, *, queue: bool = False) -> None:
-        """Play ``motion`` now, dropping anything playing or queued; with ``queue``, play it after them."""
-        if isinstance(motion, Clip):
-            motion = motion.resample(self.fps)
+    def play(self, motion: Motion | Callable[[], Motion], *, queue: bool = False) -> None:
+        """Play ``motion`` now, dropping anything playing or queued; with ``queue``, play it after them.
+
+        ``motion`` can also be a function that makes one, such as a request to a motion generator. It runs on a
+        background thread and its motion plays when it returns, unless ``play`` or ``stop`` was called since.
+        """
         with self._lock:
             if not queue:
-                self._queue.clear()
-                self._interrupt = True
-            self._queue.append(motion)
+                self._generation += 1
+            generation = self._generation
+        if isinstance(motion, Motion):
+            self._schedule(motion, queue, generation)
+        else:
+            threading.Thread(target=self._make, args=(motion, queue, generation), daemon=True).start()
 
     def stop(self) -> None:
-        """Drop the playing and queued motions and blend back to idle."""
+        """Drop the playing and queued motions, and any being made, and blend back to idle."""
         with self._lock:
+            self._generation += 1
             self._queue.clear()
             self._interrupt = True
 
@@ -144,13 +152,19 @@ class Animator:
             pose: Pose = self._source.sample(t) + self._speech.sample(t)
             return pose
 
-    def start(self, sink: Callable[[Pose], None]) -> None:
-        """Tick ``fps`` times a second on a thread, passing each pose to ``sink``."""
+    def on_pose(self, callback: Callable[[Pose], None]) -> Callable[[Pose], None]:
+        """Call ``callback(pose)`` on every tick of ``start()``; usable as a decorator, and callable more than once."""
+        with self._lock:
+            self._pose_callbacks.append(callback)
+        return callback
+
+    def start(self) -> None:
+        """Tick ``fps`` times a second on a background thread, passing each pose to the ``on_pose`` callbacks."""
         if self._thread is not None and self._thread.is_alive():
             logger.warning("Animator already running; start() ignored")
             return
         self._closing.clear()
-        self._thread = threading.Thread(target=self._run, args=(sink,), name="reachy-animation", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="reachy-animation", daemon=True)
         self._thread.start()
 
     def close(self) -> None:
@@ -160,16 +174,22 @@ class Animator:
             self._thread.join()
             self._thread = None
 
-    def _run(self, sink: Callable[[Pose], None]) -> None:
+    def _run(self) -> None:
         """Tick on a drift-free grid; after an overrun, skip missed ticks rather than replay them in a burst."""
         period = 1.0 / self.fps
         next_tick = self._clock()
-        last_overrun_log = -1.0
+        last_overrun_log = last_error_log = -1.0
         while not self._closing.is_set():
-            try:
-                sink(self.tick(next_tick))
-            except Exception as e:  # noqa: BLE001 - a failing robot link must not kill the loop
-                logger.error("Pose sink failed: %s", e)
+            pose = self.tick(next_tick)
+            with self._lock:
+                callbacks = tuple(self._pose_callbacks)
+            for callback in callbacks:
+                try:
+                    callback(pose.copy())
+                except Exception as e:  # noqa: BLE001 - a failing robot link must not kill the loop
+                    if next_tick - last_error_log >= 1.0:  # a dropped link fails every tick: log once a second
+                        logger.error("on_pose callback failed: %s", e)
+                        last_error_log = next_tick
             next_tick += period
             now = self._clock()
             if now - next_tick > period:
@@ -179,6 +199,26 @@ class Animator:
                     logger.warning("Animator behind schedule, skipped %d ticks", skipped)
                     last_overrun_log = now
             self._closing.wait(max(0.0, next_tick - self._clock()))
+
+    def _make(self, make_motion: Callable[[], Motion], queue: bool, generation: int) -> None:
+        try:
+            motion = make_motion()
+        except Exception as e:  # noqa: BLE001 - a failed generator must not take the animator down
+            logger.warning("Could not make a motion to play: %s", e)
+            return
+        self._schedule(motion, queue, generation)
+
+    def _schedule(self, motion: Motion, queue: bool, generation: int) -> None:
+        if isinstance(motion, Clip):
+            motion = motion.resample(self.fps)
+        with self._lock:
+            if generation != self._generation:
+                logger.info("Dropped %s: superseded while it was being made", motion.name)
+                return
+            if not queue:
+                self._queue.clear()
+                self._interrupt = True
+            self._queue.append(motion)
 
     def _enter(self, motion: Motion | None, t: float) -> None:
         """Crossfade from whatever is showing into ``motion``, or back into idle."""

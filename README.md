@@ -12,7 +12,8 @@ pip install git+https://github.com/pham-tuan-binh/reachy-animation
 from reachy_animation import Animator, Clip, to_target
 
 animator = Animator(fps=60)
-animator.start(lambda pose: robot.set_target(*to_target(pose)))
+animator.on_pose(lambda pose: robot.set_target(*to_target(pose)))   # where each pose goes
+animator.start()                                                     # 60 poses a second, in the background
 
 animator.feed_speech(chunk, 24_000)          # each audio chunk you send to the speaker: the head sways with it
 animator.play(Clip.load("cheerful1.json"))   # play a motion now
@@ -46,7 +47,8 @@ class Nod:
 
 robot = ReachyMini()
 animator = Animator(fps=60, idle=Breathing(), blend_s=0.4)
-animator.start(lambda pose: robot.set_target(*to_target(pose)))    # 60 poses per second to the robot
+animator.on_pose(lambda pose: robot.set_target(*to_target(pose)))  # every pose to the robot
+animator.start()                                                     # 60 poses per second, in the background
 
 animator.play(Clip.load("cheerful1.json"))                     # a 50 fps library clip, resampled to 60
 animator.play(Clip.from_frames(np.zeros((50, 9)), fps=25), queue=True)   # 2 s of a 25 fps clip, after it
@@ -62,6 +64,13 @@ animator.stop()                                                # drop the queue,
 time.sleep(1)
 animator.close()
 ```
+
+[`examples/generate_dense.py`](examples/generate_dense.py) shows the real-time pattern: the animator streams poses to
+the robot in the background, and each text prompt becomes
+`animator.play(partial(generate, prompt))`. The
+[motion generator](https://huggingface.co/spaces/binhpham/reachy-mini-motion-generator)'s `/generate-dense` call runs
+in the background, and the motion plays the moment it arrives. It connects with `media_backend="no_media"`, so other apps keep
+the robot's audio and camera.
 
 ## Speech
 
@@ -79,9 +88,11 @@ follows what is *heard*.
 |---|---|
 | `play(motion)` | play now, replacing whatever is playing or queued |
 | `play(motion, queue=True)` | play after what is already queued |
+| `play(make_motion)` | run `make_motion()` in the background (e.g. a generator request) and play what it returns |
 | `stop()` | back to idle |
 
-Every change crossfades, so the robot never jumps.
+Every change crossfades, so the robot never jumps. While a motion is being made, the robot keeps doing what it was
+doing. The newest `play` or `stop` wins: a motion that finishes being made after a newer one was asked for is dropped.
 
 ```python
 Clip.load("fear1.json")               # a recorded-move file (Pollen's emotion/dance libraries)
@@ -118,8 +129,8 @@ Animator(
 )
 ```
 
-`animator.tick(t)` returns the pose at time `t` if you'd rather drive the loop yourself; `close()` stops
-`start()`'s thread.
+`on_pose(callback)` can be called more than once, or used as a decorator. Every callback gets each pose.
+`close()` stops `start()`'s thread. If you'd rather drive the loop yourself, `tick(t)` returns the pose at time `t`.
 
 ## Try it in simulation
 

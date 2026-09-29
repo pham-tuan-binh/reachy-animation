@@ -7,7 +7,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -15,6 +15,7 @@ from numpy.typing import ArrayLike, NDArray
 from reachy_animation.pose import DOF, Pose, from_target, zero_pose
 
 
+@runtime_checkable
 class Motion(Protocol):
     """A pose over time: a recorded clip, a procedural motion, or streamed generator output.
 

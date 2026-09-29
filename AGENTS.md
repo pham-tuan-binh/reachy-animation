@@ -6,7 +6,7 @@ Read this and `README.md` before writing code.
 ## What this project is
 
 The control loop that animates Reachy Mini. It turns two high-level inputs, **speech audio** and **motions to
-play**, into one full-body pose per control tick. It does **not** talk to the robot. A caller's `sink` does
+play**, into one full-body pose per control tick. It does **not** talk to the robot. A caller's `on_pose` callback does
 that, so keep robot I/O out of the core.
 
 ## Map
@@ -19,6 +19,7 @@ src/reachy_animation/
   animator.py   Animator: layers + crossfades, hooks, tick(), the fps thread
   sim.py        CLI: scripted scenario -> simulated ticks -> MuJoCo -> mp4   (sim extra only)
 tests/          mirrors src/, runs without the sim extra
+examples/       small scripts using the public API (need the SDK and a running daemon)
 ```
 
 Per tick, bottom to top: idle motion, the played motion (entered and left by crossfade), and speech sway added
@@ -39,6 +40,8 @@ can't do without it.
    A new transition during a blend blends from the blend. Don't snap, and don't freeze the old pose.
 4. **Hooks are thread-safe and cheap.** They take `_lock` briefly. Motion hooks are queued and applied on the
    next tick, at that tick's time. Nothing slow (I/O, model inference) runs under the lock or in `tick`.
+   Slow motion sources go through `play(make_motion)`, which makes them on a background thread. The newest
+   `play`/`stop` wins, tracked by `_generation`.
 5. **Core stays light.** `pose`, `motion`, `speech` and `animator` import only numpy and the stdlib.
    MuJoCo, the SDK, imageio-ffmpeg and PIL belong in `sim.py`.
 6. **Units:** metres and radians everywhere. Euler angles are extrinsic xyz, matching the SDK's
@@ -55,7 +58,7 @@ can't do without it.
   `t` (hold the latest frame while waiting), and it must be safe to append from another thread.
 - **Tuning the speech sway:** the constants at the top of `speech.py`. Check by ear and eye with
   `python -m reachy_animation.sim --speech` and a speech-only render.
-- **Robot link:** a sink `lambda pose: robot.set_target(*to_target(pose))`, with reachability projection
+- **Robot link:** an `on_pose` callback `lambda pose: robot.set_target(*to_target(pose))`, with reachability projection
   in front of it. It lives in the caller, or in a separate module that keeps the core free of SDK imports.
 
 ## Validate
@@ -83,9 +86,12 @@ uv run python -m reachy_animation.sim --out out/check.mp4 --duration 8 \
   one-line docstrings on public APIs.
 - Comments explain *why*, never *what*.
 - Log with the module `logger` and lazy `%` args. Never swallow errors silently. The one broad `except` is the
-  sink call in the tick thread, where a failing robot link must not kill the loop.
+  `on_pose` callbacks in the tick thread (logged at most once a second), where a failing robot link must not kill
+  the loop.
 - Tests exercise behaviour through the public API (plus `speech.SpeechSway` directly). A bug fix comes with
   a regression test, and a feature with at least a happy-path test.
+- Robot-facing code connects with `media_backend="no_media"` and changes no daemon-wide setting: other apps own
+  audio and the camera.
 - Minimal diffs, no dead code, no speculative parameters. Keep `README.md` in sync with any API change.
 - The package is installed from the git URL (`pip install git+https://github.com/pham-tuan-binh/reachy-animation`),
   so `main` must always be installable and green.
