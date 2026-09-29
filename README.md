@@ -80,6 +80,49 @@ the robot in the background, and each text prompt becomes
 in the background, and the motion plays the moment it arrives. It connects with `media_backend="no_media"`, so other apps keep
 the robot's audio and camera.
 
+## How it works
+
+Every tick (`fps` times a second), the animator builds one pose from three layers and hands it to your callbacks.
+
+```mermaid
+flowchart LR
+    subgraph you["Your code (any thread)"]
+        speech["feed_speech(audio)"]
+        play["play(motion) / stop()"]
+        make["play(make_motion)"]
+    end
+    make -. "made on a background thread" .-> play
+    speech --> sway["Speech sway<br/>loudness → head offset"]
+    play --> queue["Queue"]
+    idle["Idle<br/>breathing"] --> fade["Crossfade"]
+    queue --> fade
+    fade --> add(("+"))
+    sway --> add
+    add --> tick["tick(t)"]
+    tick --> on_pose["on_pose callbacks"]
+    on_pose --> robot["robot.set_target(...)"]
+```
+
+1. **Body:** idle breathing, or the motion being played. Switching between them always crossfades, so the robot
+   never jumps.
+2. **Speech sway** is added on top of the body. Audio is lined up on a playback timeline as it arrives and turned
+   into loudness, so the head moves with what is being *heard*.
+3. **Output:** a background thread ticks on a fixed schedule and passes each pose to every `on_pose` callback.
+   `tick(t)` gives the same result for the same inputs, which is how the simulation and the tests run it.
+
+### What's better than before
+
+Compared with the conversation app's original movement manager and head wobbler:
+
+| | Before | Now |
+|---|---|---|
+| Switching motions | the next move starts at its own first frame, so it can jump | every change crossfades, even mid-fade |
+| Speech wobble | updated in 50 ms steps from its own sleeping thread | smooth at any frame rate, with small nods on syllables |
+| Barge-in | the head snaps back to neutral | the unplayed audio is dropped and the sway settles |
+| Clips at other rates | sampled whenever the loop runs | converted to one rate, smoothed so nothing aliases |
+| Slow motion sources | not supported | `play(make_motion)` in the background, newest request wins |
+| Robot | tied to the app and a live `ReachyMini` | any `on_pose` callback; runs in simulation and tests |
+
 ## Speech
 
 | Call | When |
