@@ -4,6 +4,14 @@ Makes [Reachy Mini](https://github.com/pollen-robotics/reachy_mini) move natural
 You give it **the audio being spoken** and **the motions to play**. It gives back one full-body pose per
 frame, 60 times a second by default.
 
+| Speech sways the head | Motions crossfade and queue |
+|---|---|
+| ![Head swaying while Reachy Mini speaks](docs/gifs/speech.gif) | ![A library clip crossfading in, a queued clip, then idle](docs/gifs/motion.gif) |
+| **Text to motion** with the generator | **Both at once**, then a barge-in |
+| ![Motion generated from a text prompt](docs/gifs/generated.gif) | ![Speech sway on top of a motion, then the speech is cut](docs/gifs/layered.gif) |
+
+<sub>Rendered with the real animator on the official MuJoCo model; the strip is the speech audio, with the playhead.</sub>
+
 ```bash
 pip install git+https://github.com/pham-tuan-binh/reachy-animation
 ```
