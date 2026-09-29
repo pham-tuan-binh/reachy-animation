@@ -10,7 +10,8 @@ frame, 60 times a second by default.
 | **Text to motion** with the generator | **Both at once**, then a barge-in |
 | ![Motion generated from a text prompt](docs/gifs/generated.gif) | ![Speech sway on top of a motion, then the speech is cut](docs/gifs/layered.gif) |
 
-<sub>Rendered with the real animator on the official MuJoCo model; the strip is the speech audio, with the playhead.</sub>
+<sub>Rendered with the real animator on the official MuJoCo model; the strip is the speech audio, with the playhead.
+The text-to-motion clip is the generator's output for one of the example recipes shipped with it.</sub>
 
 ```bash
 pip install git+https://github.com/pham-tuan-binh/reachy-animation
