@@ -20,6 +20,49 @@ animator.play(Clip.load("cheerful1.json"))   # play a motion now
 
 That's the whole idea. The rest is reference.
 
+## Example
+
+Everything in one place: a custom motion, clips at different rates, queueing, speech and barge-in.
+
+```python
+import math
+import time
+
+import numpy as np
+from reachy_mini import ReachyMini
+from reachy_animation import Animator, Breathing, Clip, to_target
+
+
+class Nod:
+    """A custom motion: anything with name, duration and sample(t) -> pose."""
+
+    name, duration = "nod", 1.0
+
+    def sample(self, t):
+        pose = np.zeros(9)                                     # x y z roll pitch yaw antenna_r antenna_l body_yaw
+        pose[4] = 0.25 * math.sin(math.pi * min(t, 1.0))       # pitch down and back up
+        return pose
+
+
+robot = ReachyMini()
+animator = Animator(fps=60, idle=Breathing(), blend_s=0.4)
+animator.start(lambda pose: robot.set_target(*to_target(pose)))    # 60 poses per second to the robot
+
+animator.play(Clip.load("cheerful1.json"))                     # a 50 fps library clip, resampled to 60
+animator.play(Clip.from_frames(np.zeros((50, 9)), fps=25), queue=True)   # 2 s of a 25 fps clip, after it
+animator.play(Nod(), queue=True)                               # then the custom nod
+
+speech = (3000 * np.sin(np.arange(3 * 24_000) / 8)).astype(np.int16)   # stand-in for TTS audio
+for chunk in np.array_split(speech, 30):                       # chunks may arrive faster than they play
+    animator.feed_speech(chunk, 24_000)                        # the head sways with it, on top of the clips
+
+time.sleep(2)
+animator.interrupt_speech()                                    # the user barged in: stop swaying
+animator.stop()                                                # drop the queue, blend back to idle
+time.sleep(1)
+animator.close()
+```
+
 ## Speech
 
 | Call | When |
