@@ -21,10 +21,10 @@ from reachy_animation import Animator, Clip, to_target
 
 
 def generate(api: str, prompt: str) -> Clip:
-    """Ask the motion generator for one motion (~0.4 s on the GPU with effort "low")."""
+    """Ask the motion generator for one motion, from whichever planner the server has loaded (~0.2-0.8 s)."""
     request = urllib.request.Request(
         f"{api}/generate-dense",
-        data=json.dumps({"prompt": prompt, "effort": "low"}).encode(),
+        data=json.dumps({"prompt": prompt}).encode(),
         headers={"content-type": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
