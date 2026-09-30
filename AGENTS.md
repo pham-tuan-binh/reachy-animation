@@ -17,6 +17,7 @@ src/reachy_animation/
   motion.py     Motion protocol, Clip (keyframes), Breathing (idle)      (numpy only)
   speech.py     SpeechSway: speech audio -> loudness envelopes -> head offset   (internal, numpy only)
   animator.py   Animator: layers + crossfades, hooks, tick(), the fps thread
+  clips.py      clips.<name> / get / names: Pollen's emotion + dance libraries, fetched from the Hub on first use (stdlib only)
   sim.py        CLI: scripted scenario -> simulated ticks -> MuJoCo -> mp4   (sim extra only)
 tests/          mirrors src/, runs without the sim extra
 examples/       small scripts using the public API (need the SDK and a running daemon)
@@ -42,7 +43,7 @@ can't do without it.
    next tick, at that tick's time. Nothing slow (I/O, model inference) runs under the lock or in `tick`.
    Slow motion sources go through `play(make_motion)`, which makes them on a background thread. The newest
    `play`/`stop` wins, tracked by `_generation`.
-5. **Core stays light.** `pose`, `motion`, `speech` and `animator` import only numpy and the stdlib.
+5. **Core stays light.** `pose`, `motion`, `speech`, `animator` and `clips` import only numpy and the stdlib.
    MuJoCo, the SDK, imageio-ffmpeg and PIL belong in `sim.py`.
 6. **Units:** metres and radians everywhere. Euler angles are extrinsic xyz, matching the SDK's
    `create_head_pose` and the motion generator's trajectories. Antenna right droops with negative angles,

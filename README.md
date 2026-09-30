@@ -15,14 +15,14 @@ pip install git+https://github.com/pham-tuan-binh/reachy-animation
 ```
 
 ```python
-from reachy_animation import Animator, Clip, to_target
+from reachy_animation import Animator, clips, to_target
 
 animator = Animator(fps=60)
 animator.on_pose(lambda pose: robot.set_target(*to_target(pose)))   # where each pose goes
 animator.start()                                                     # 60 poses a second, in the background
 
 animator.feed_speech(chunk, 24_000)          # each audio chunk you send to the speaker: the head sways with it
-animator.play(Clip.load("cheerful1.json"))   # play a motion now
+animator.play(clips.cheerful1)               # play a motion now: 104 come built in, see clips.names()
 ```
 
 That's the whole idea. The rest is reference.
@@ -37,7 +37,7 @@ import time
 
 import numpy as np
 from reachy_mini import ReachyMini
-from reachy_animation import Animator, Breathing, Clip, to_target
+from reachy_animation import Animator, Breathing, Clip, clips, to_target
 
 
 class Nod:
@@ -56,7 +56,7 @@ animator = Animator(fps=60, idle=Breathing(), blend_s=0.4)
 animator.on_pose(lambda pose: robot.set_target(*to_target(pose)))  # every pose to the robot
 animator.start()                                                     # 60 poses per second, in the background
 
-animator.play(Clip.load("cheerful1.json"))                     # a 50 fps library clip, resampled to 60
+animator.play(clips.cheerful1)                                 # a 50 fps library clip, resampled to 60
 animator.play(Clip.from_frames(np.zeros((50, 9)), fps=25), queue=True)   # 2 s of a 25 fps clip, after it
 animator.play(Nod(), queue=True)                               # then the custom nod
 
@@ -143,6 +143,25 @@ follows what is *heard*.
 
 Every change crossfades, so the robot never jumps. While a motion is being made, the robot keeps doing what it was
 doing. The newest `play` or `stop` wins: a motion that finishes being made after a newer one was asked for is dropped.
+
+### Built-in clips
+
+```python
+from reachy_animation import clips
+
+clips.names()            # ['amazed1', 'anxiety1', ..., 'chicken_peck', ..., 'yeah_nod']
+clips.cheerful1          # a Clip
+clips.get("cheerful1")   # the same, by name (e.g. one an LLM picked)
+```
+
+These are Pollen's [emotion](https://huggingface.co/datasets/pollen-robotics/reachy-mini-emotions-library) and
+[dance](https://huggingface.co/datasets/pollen-robotics/reachy-mini-dances-library) libraries (Apache-2.0), pinned to
+one revision. The first use of a clip downloads it from the Hugging Face Hub into `~/.cache/reachy-animation`.
+After that it loads from disk. To keep a first download off the caller's thread, pass a function:
+`animator.play(lambda: clips.cheerful1)`. Hyphens in library names become underscores (`toc-toc-toc` is
+`clips.toc_toc_toc`).
+
+### Your own clips
 
 ```python
 Clip.load("fear1.json")               # a recorded-move file (Pollen's emotion/dance libraries)

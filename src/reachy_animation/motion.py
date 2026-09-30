@@ -56,9 +56,12 @@ class Clip:
             recorded, name = move, move.get("description") or "clip"
         else:
             recorded, name = json.loads(Path(move).read_text()), Path(move).stem
-        frames = recorded["set_target_data"]
+        times = np.asarray(recorded["time"], dtype=np.float64)
+        # Some library moves repeat a timestamp (rounded recording times); keep the first frame of each.
+        keep = np.concatenate([[True], np.diff(times) != 0])
+        frames = [f for f, k in zip(recorded["set_target_data"], keep, strict=True) if k]
         poses = [from_target(f["head"], f["antennas"], f.get("body_yaw", 0.0)) for f in frames]
-        return cls(recorded["time"], poses, name)
+        return cls(times[keep], poses, name)
 
     @classmethod
     def from_frames(cls, poses: ArrayLike, fps: float, name: str = "clip") -> Clip:

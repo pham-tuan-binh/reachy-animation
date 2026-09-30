@@ -29,6 +29,14 @@ def test_clip_loads_a_move_interpolates_and_holds_ends() -> None:
     np.testing.assert_allclose(clip.sample(0.5)[6:8], [0.1, -0.1])
 
 
+def test_clip_load_drops_repeated_timestamps() -> None:
+    clip = Clip.load(_move([0.0, 0.5, 0.5, 1.0], [0.0, 0.2, 0.3, 0.4]))
+    np.testing.assert_allclose(clip.times, [0.0, 0.5, 1.0])
+    np.testing.assert_allclose(clip.sample(0.5)[5], 0.2)
+    with pytest.raises(ValueError, match="increasing"):
+        Clip.load(_move([0.0, 1.0, 0.5], [0.0, 0.1, 0.2]))
+
+
 def test_clip_interpolates_across_the_yaw_wrap_the_short_way() -> None:
     clip = Clip.load(_move([0.0, 1.0], [math.pi - 0.1, -math.pi + 0.1]))
     mid = from_target(*to_target(clip.sample(0.5)))
