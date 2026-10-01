@@ -132,6 +132,15 @@ Compared with the movement manager and head wobbler of the Hugging Face
 Chunks can arrive faster than they play (realtime APIs burst). They're lined up back to back, so the sway
 follows what is *heard*.
 
+To calm the wobble, lower `speech_sway`. To let motions read clearly while the robot talks, lower
+`speech_sway_in_motion` (say `0.3`): the wobble fades down as a motion crossfades in and comes back with idle.
+Both can be changed live, easing to the new value over `blend_s`:
+
+```python
+animator.set_speech_sway(0.5)                # calmer wobble from now on
+animator.set_speech_sway(in_motion=0.3)      # keep 30% of it while a motion plays
+```
+
 ## Motion
 
 | Call | Effect |
@@ -195,10 +204,12 @@ x  y  z  (m)  |  roll  pitch  yaw  (rad)  |  antenna_right  antenna_left  (rad) 
 
 ```python
 Animator(
-    fps=60,                # poses per second
-    idle=Breathing(),      # what plays when nothing else does
-    blend_s=0.4,           # crossfade duration
-    speech_latency_s=0.0,  # delay from feed_speech to sound coming out of the speaker
+    fps=60,                     # poses per second
+    idle=Breathing(),           # what plays when nothing else does
+    blend_s=0.4,                # crossfade duration
+    speech_latency_s=0.0,       # delay from feed_speech to sound coming out of the speaker
+    speech_sway=1.0,            # head wobble intensity while speaking (0 turns it off)
+    speech_sway_in_motion=1.0,  # fraction of that wobble kept while a motion plays
 )
 ```
 

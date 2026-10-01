@@ -29,25 +29,53 @@ from reachy_animation.speech import SpeechSway
 logger = logging.getLogger(__name__)
 
 
+def _smoothstep(t: float, start: float, duration: float) -> float:
+    a = 1.0 if duration <= 0 else min(max((t - start) / duration, 0.0), 1.0)
+    return a * a * (3.0 - 2.0 * a)
+
+
+class _Ramp:
+    """A value that eases to each new target from wherever it is, so changing it mid-ramp never jumps."""
+
+    def __init__(self, value: float) -> None:
+        self.source = self.target = value
+        self.start = self.duration = 0.0
+
+    def at(self, t: float) -> float:
+        return self.source + (self.target - self.source) * _smoothstep(t, self.start, self.duration)
+
+    def to(self, value: float, t: float, duration: float) -> None:
+        self.source = self.at(t)
+        self.target = value
+        self.start = t
+        self.duration = duration
+
+
 class _Source(Protocol):
     def sample(self, t: float) -> Pose: ...
 
     def settle(self, t: float) -> _Source: ...
 
+    def moving(self, t: float) -> float: ...
+
 
 class _Playing:
     """A motion anchored on the animator's clock."""
 
-    def __init__(self, motion: Motion, start: float) -> None:
+    def __init__(self, motion: Motion, start: float, idle: bool = False) -> None:
         self.motion = motion
         self.start = start
         self.end = start + motion.duration
+        self.idle = idle
 
     def sample(self, t: float) -> Pose:
         return self.motion.sample(t - self.start)
 
     def settle(self, t: float) -> _Source:
         return self
+
+    def moving(self, t: float) -> float:
+        return 0.0 if self.idle else 1.0
 
 
 class _Crossfade:
@@ -60,10 +88,13 @@ class _Crossfade:
         self.duration = duration
 
     def sample(self, t: float) -> Pose:
-        a = 1.0 if self.duration <= 0 else min(max((t - self.start) / self.duration, 0.0), 1.0)
-        w = a * a * (3.0 - 2.0 * a)
+        w = _smoothstep(t, self.start, self.duration)
         blended: Pose = (1.0 - w) * self.source.sample(t) + w * self.target.sample(t)
         return blended
+
+    def moving(self, t: float) -> float:
+        w = _smoothstep(t, self.start, self.duration)
+        return (1.0 - w) * self.source.moving(t) + w * self.target.moving(t)
 
     def settle(self, t: float) -> _Source:
         if t >= self.start + self.duration:
@@ -85,16 +116,24 @@ class Animator:
         idle: Motion | None = None,
         blend_s: float = 0.4,
         speech_latency_s: float = 0.0,
+        speech_sway: float = 1.0,
+        speech_sway_in_motion: float = 1.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        """Create an animator; ``clock`` timestamps hooks and schedules ticks (inject one to simulate)."""
+        """Create an animator; ``clock`` timestamps hooks and schedules ticks (inject one to simulate).
+
+        ``speech_sway`` scales the speech head wobble, and ``speech_sway_in_motion`` is the fraction of it kept while
+        a motion plays (faded in and out with the motion's crossfade). Change them live with ``set_speech_sway``.
+        """
         self.fps = fps
         self.blend_s = blend_s
+        self._sway = _Ramp(speech_sway)
+        self._sway_in_motion = _Ramp(speech_sway_in_motion)
         self._idle = idle or Breathing()
         self._speech = SpeechSway(latency_s=speech_latency_s)
         self._clock = clock
         self._lock = threading.Lock()
-        self._source: _Source = _Playing(self._idle, 0.0)
+        self._source: _Source = _Playing(self._idle, 0.0, idle=True)
         self._current: _Playing | None = None
         self._queue: deque[Motion] = deque()
         self._interrupt = False  # leave the current motion on the next tick
@@ -141,6 +180,15 @@ class Animator:
         with self._lock:
             self._speech.interrupt(self._clock())
 
+    def set_speech_sway(self, sway: float | None = None, *, in_motion: float | None = None) -> None:
+        """Change ``speech_sway`` and/or ``speech_sway_in_motion``, easing to the new values over ``blend_s``."""
+        with self._lock:
+            now = self._clock()
+            if sway is not None:
+                self._sway.to(sway, now, self.blend_s)
+            if in_motion is not None:
+                self._sway_in_motion.to(in_motion, now, self.blend_s)
+
     def tick(self, t: float) -> Pose:
         """Return the pose to command at time ``t``; call with increasing ``t``."""
         with self._lock:
@@ -149,7 +197,9 @@ class Animator:
                 self._interrupt = False
                 self._enter(self._queue.popleft() if self._queue else None, t)
             self._source = self._source.settle(t)
-            pose: Pose = self._source.sample(t) + self._speech.sample(t)
+            moving = self._source.moving(t)
+            gain = self._sway.at(t) * (1.0 - moving + moving * self._sway_in_motion.at(t))
+            pose: Pose = self._source.sample(t) + gain * self._speech.sample(t)
             return pose
 
     def on_pose(self, callback: Callable[[Pose], None]) -> Callable[[Pose], None]:
@@ -223,7 +273,7 @@ class Animator:
     def _enter(self, motion: Motion | None, t: float) -> None:
         """Crossfade from whatever is showing into ``motion``, or back into idle."""
         if motion is None:
-            target = _Playing(self._idle, 0.0)  # idle keeps its own phase across interruptions
+            target = _Playing(self._idle, 0.0, idle=True)  # idle keeps its own phase across interruptions
             if self._current:
                 logger.debug("Finished %s, back to idle", self._current.motion.name)
             self._current = None

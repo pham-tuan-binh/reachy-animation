@@ -94,6 +94,41 @@ def test_speech_adds_on_top_of_a_played_motion() -> None:
     assert np.abs(swayed).max() > 0.01
 
 
+def test_speech_sway_scales_and_fades_out_during_a_motion() -> None:
+    rate = 24_000
+    tone = (0.3 * 32767 * np.sin(2 * np.pi * 220 * np.arange(3 * rate) / rate)).astype(np.int16)
+
+    def yaw(**options: float) -> np.ndarray:
+        now = [0.0]
+        animator = Animator(idle=Still(), blend_s=0.4, clock=lambda: now[0], **options)
+        animator.feed_speech(tone, rate)
+        animator.play(Hold("still", zero_pose(), 1.0))
+        return _run(animator, 0.0, 3.0)[:, 5]
+
+    full, half, calm = yaw(), yaw(speech_sway=0.5), yaw(speech_sway_in_motion=0.0)
+    np.testing.assert_allclose(half, 0.5 * full)
+    np.testing.assert_allclose(calm[int(0.5 * FPS) : int(1.0 * FPS)], 0.0)  # motion fully in
+    np.testing.assert_allclose(calm[int(1.5 * FPS) :], full[int(1.5 * FPS) :])  # back to idle
+    assert np.abs(np.diff(calm)).max() <= np.abs(np.diff(full)).max() + 1e-3
+
+
+def test_set_speech_sway_eases_to_the_new_gain() -> None:
+    rate = 24_000
+    tone = (0.3 * 32767 * np.sin(2 * np.pi * 220 * np.arange(3 * rate) / rate)).astype(np.int16)
+    now = [0.0]
+    live = Animator(idle=Still(), blend_s=0.4, clock=lambda: now[0])
+    fixed = Animator(idle=Still(), blend_s=0.4, clock=lambda: now[0])
+    live.feed_speech(tone, rate)
+    fixed.feed_speech(tone, rate)
+    before = _run(live, 0.0, 1.0)[:, 5]
+    now[0] = 1.0
+    live.set_speech_sway(0.0)
+    after = _run(live, 1.0, 3.0)[:, 5]
+    full = _run(fixed, 0.0, 3.0)[:, 5]
+    np.testing.assert_allclose(after[int(0.4 * FPS) :], 0.0)
+    assert np.abs(np.diff(np.concatenate([before, after]))).max() <= np.abs(np.diff(full)).max() + 1e-3
+
+
 @pytest.mark.parametrize("fps", [30.0, 60.0, 100.0])
 def test_clips_at_any_recorded_rate_play_in_real_time(fps: float) -> None:
     poses = np.zeros((26, 9))
