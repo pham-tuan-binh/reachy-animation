@@ -27,6 +27,23 @@ animator.play(clips.cheerful1)               # play a motion now: 104 come built
 
 That's the whole idea. The rest is reference.
 
+## For the most realistic motion, generate it
+
+The built-in clips cover 104 recorded moves. For anything else, use
+[reachy-motion-generator](https://github.com/pham-tuan-binh/reachy-motion-generator): it turns a text prompt
+(*"sneezing"*, *"a cat stalking prey"*, *"heartbroken"*) into a motion in Reachy Mini's own style. A fine-tuned LLM
+plans what to express, and a flow-matching model trained only on Pollen's real recorded motion animates it, so the
+timing, overshoot and antenna flicks look recorded rather than keyframed. Its moves are already fitted to what the
+robot can reach, and they play as clips:
+
+```python
+moves = requests.post("http://localhost:8000/generate-dense", json={"prompt": "sneezing. You build up and then sneeze loudly."}).json()["moves"]
+animator.play(Clip.load(moves[0]))
+```
+
+Run the request through `play(make_motion)` so the robot keeps moving while it is made; see
+[`examples/generate_dense.py`](examples/generate_dense.py).
+
 ## Example
 
 Everything in one place: a custom motion, clips at different rates, queueing, speech and barge-in.
@@ -229,7 +246,7 @@ what's playing. On macOS, `say -o speech.wav --data-format=LEI16@24000 "Hi!"` ma
 
 **Not handled here: reachability.** Some library clips (e.g. `cheerful1`) ask for poses the robot can't
 reach. The sim, like the daemon, holds the last reachable pose. A real robot link should project poses first
-(e.g. the motion generator's `common/reach.py`).
+(e.g. [reachy-motion-generator](https://github.com/pham-tuan-binh/reachy-motion-generator)'s `common/reach.py`).
 
 ## Develop
 
