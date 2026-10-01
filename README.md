@@ -95,6 +95,11 @@ the robot in the background, and each text prompt becomes
 in the background, and the motion plays the moment it arrives. It connects with `media_backend="no_media"`, so other apps keep
 the robot's audio and camera.
 
+[`examples/dance_to_music.py`](examples/dance_to_music.py) makes the robot dance to whatever its microphone hears. A beat
+tracker finds the tempo and where the beats fall, and a custom idle motion phase-locked to them nods on every beat and
+sways across bars. The mic audio also goes to `feed_speech` for a loudness wobble, and when the music comes back loud
+after a breakdown (the drop), a random dance clip plays. `--intensity` scales it all.
+
 ## How it works
 
 Every tick (`fps` times a second), the animator builds one pose from three layers and hands it to your callbacks.
