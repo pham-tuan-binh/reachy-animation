@@ -23,6 +23,7 @@ animator.start()                                                     # 60 poses 
 
 animator.feed_speech(chunk, 24_000)          # each audio chunk you send to the speaker: the head sways with it
 animator.play(clips.cheerful1)               # play a motion now: 104 come built in, see clips.names()
+animator.look(yaw=0.3, pitch=-0.1)           # turn the head toward someone, e.g. from a face tracker
 ```
 
 That's the whole idea. The rest is reference.
@@ -110,6 +111,7 @@ flowchart LR
         speech["feed_speech(audio)"]
         play["play(motion) / stop()"]
         make["play(make_motion)"]
+        look["look(yaw, pitch)"]
     end
     make -. "made on a background thread" .-> play
     speech --> sway["Speech sway<br/>loudness → head offset"]
@@ -118,6 +120,7 @@ flowchart LR
     queue --> fade
     fade --> add(("+"))
     sway --> add
+    look --> spring["Look<br/>spring → head offset"] --> add
     add --> tick["tick(t)"]
     tick --> on_pose["on_pose callbacks"]
     on_pose --> robot["robot.set_target(...)"]
@@ -127,7 +130,8 @@ flowchart LR
    never jumps.
 2. **Speech sway** is added on top of the body. Audio is lined up on a playback timeline as it arrives and turned
    into loudness, so the head moves with what is being *heard*.
-3. **Output:** a background thread ticks on a fixed schedule and passes each pose to every `on_pose` callback.
+3. **Look** is added on top too: a pitch/yaw offset that springs toward the latest `look` target.
+4. **Output:** a background thread ticks on a fixed schedule and passes each pose to every `on_pose` callback.
    `tick(t)` gives the same result for the same inputs, which is how the simulation and the tests run it.
 
 ### What's better than before
@@ -212,6 +216,29 @@ also did. Play the sound yourself if you want it, since audio belongs to whateve
 Need something else, like procedural motion or a stream from a generator? Any object with `name`,
 `duration` (use `math.inf` if it ends only when interrupted) and `sample(t) -> pose` can be played.
 
+## Look
+
+| Call | When |
+|---|---|
+| `look(yaw, pitch)` | every time your tracker (face, sound source, ...) has a new direction, in radians |
+| `look(None)` | the target is gone: ease back to the plain animation |
+
+The offset is added to the head's pitch and yaw on top of everything else, so breathing and speech sway keep
+going while the robot looks at someone. Targets can arrive at any rate and with jitter: the offset follows them
+with a critically damped spring (half the remaining distance every `look_halflife_s`), so velocity never jumps.
+
+Angles are relative to the **body**, not the camera. A camera in the head sees the target relative to where the
+head already points, so add the head's yaw and pitch at capture time before calling `look`, or the robot chases
+its own offset.
+
+`look_weight` scales the offset, and `look_weight_in_motion` is the fraction kept while a motion plays (half by
+default, so clips still read). Both can be changed live, easing over `blend_s`:
+
+```python
+animator.set_look_weight(0.0)                # stop looking for now (the target is kept)
+animator.set_look_weight(in_motion=1.0)      # keep looking at the person even during clips
+```
+
 ## Poses
 
 A pose is a numpy 9-vector, the same layout as the motion generator's trajectories:
@@ -232,6 +259,9 @@ Animator(
     speech_latency_s=0.0,       # delay from feed_speech to sound coming out of the speaker
     speech_sway=1.0,            # head wobble intensity while speaking (0 turns it off)
     speech_sway_in_motion=1.0,  # fraction of that wobble kept while a motion plays
+    look_weight=1.0,            # how much of the look() offset is applied (0 turns it off)
+    look_weight_in_motion=0.5,  # fraction of it kept while a motion plays
+    look_halflife_s=0.15,       # how fast the head follows a new look() target
 )
 ```
 

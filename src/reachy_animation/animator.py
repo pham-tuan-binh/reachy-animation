@@ -3,7 +3,8 @@
 Layers, bottom to top:
 - **idle** (breathing by default) runs whenever nothing is played;
 - **played motion** replaces idle, entered and left through a crossfade so no command ever jumps;
-- **speech sway** is added on top of whatever the body is doing.
+- **speech sway** is added on top of whatever the body is doing;
+- **look** adds a pitch/yaw offset toward what another pipeline (e.g. a face tracker) wants the robot to look at.
 
 ``tick(t)`` is a pure function of the hook calls made so far and ``t``, so the same animator drives the
 real-time loop (``start``) and offline simulation (calling ``tick`` yourself). Hooks are thread-safe;
@@ -13,6 +14,7 @@ motion hooks take effect on the next tick.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections import deque
@@ -49,6 +51,35 @@ class _Ramp:
         self.target = value
         self.start = t
         self.duration = duration
+
+
+class _Spring:
+    """Critically damped spring toward each new target, so frequent jittery targets still move with continuous velocity.
+
+    Closed form in ``t`` (no per-tick integration), so sampling is independent of the tick rate.
+    """
+
+    def __init__(self, halflife_s: float, size: int) -> None:
+        self.damping = 2.0 * math.log(2.0) / max(halflife_s, 1e-6)
+        self.x = np.zeros(size)
+        self.v = np.zeros(size)
+        self.target = np.zeros(size)
+        self.start = 0.0
+
+    def _state(self, t: float) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        dt = max(t - self.start, 0.0)
+        j0 = self.x - self.target
+        j1 = self.v + j0 * self.damping
+        decay = math.exp(-self.damping * dt)
+        return self.target + decay * (j0 + j1 * dt), decay * (self.v - j1 * self.damping * dt)
+
+    def at(self, t: float) -> NDArray[np.float64]:
+        return self._state(t)[0]
+
+    def to(self, target: NDArray[np.float64], t: float) -> None:
+        self.x, self.v = self._state(t)
+        self.target = target
+        self.start = t
 
 
 class _Source(Protocol):
@@ -118,17 +149,25 @@ class Animator:
         speech_latency_s: float = 0.0,
         speech_sway: float = 1.0,
         speech_sway_in_motion: float = 1.0,
+        look_weight: float = 1.0,
+        look_weight_in_motion: float = 0.5,
+        look_halflife_s: float = 0.15,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Create an animator; ``clock`` timestamps hooks and schedules ticks (inject one to simulate).
 
         ``speech_sway`` scales the speech head wobble, and ``speech_sway_in_motion`` is the fraction of it kept while
         a motion plays (faded in and out with the motion's crossfade). Change them live with ``set_speech_sway``.
+        ``look_weight`` and ``look_weight_in_motion`` do the same for the ``look`` offset (``set_look_weight``), which
+        follows each new target with a spring that covers half the remaining distance every ``look_halflife_s``.
         """
         self.fps = fps
         self.blend_s = blend_s
         self._sway = _Ramp(speech_sway)
         self._sway_in_motion = _Ramp(speech_sway_in_motion)
+        self._look = _Spring(look_halflife_s, 2)
+        self._look_weight = _Ramp(look_weight)
+        self._look_weight_in_motion = _Ramp(look_weight_in_motion)
         self._idle = idle or Breathing()
         self._speech = SpeechSway(latency_s=speech_latency_s)
         self._clock = clock
@@ -189,6 +228,25 @@ class Animator:
             if in_motion is not None:
                 self._sway_in_motion.to(in_motion, now, self.blend_s)
 
+    def look(self, yaw: float | None, pitch: float = 0.0) -> None:
+        """Turn the head by ``yaw`` and ``pitch`` (radians, robot frame) on top of the animation; ``None`` lets go.
+
+        Call it as often as the tracker updates: the offset follows with a spring, so it never jumps. The offset is
+        relative to the body, not the camera: a camera sees angles relative to where the head already points.
+        """
+        target = np.zeros(2) if yaw is None else np.array([pitch, yaw], dtype=np.float64)
+        with self._lock:
+            self._look.to(target, self._clock())
+
+    def set_look_weight(self, weight: float | None = None, *, in_motion: float | None = None) -> None:
+        """Change ``look_weight`` and/or ``look_weight_in_motion``, easing to the new values over ``blend_s``."""
+        with self._lock:
+            now = self._clock()
+            if weight is not None:
+                self._look_weight.to(weight, now, self.blend_s)
+            if in_motion is not None:
+                self._look_weight_in_motion.to(in_motion, now, self.blend_s)
+
     def tick(self, t: float) -> Pose:
         """Return the pose to command at time ``t``; call with increasing ``t``."""
         with self._lock:
@@ -200,6 +258,8 @@ class Animator:
             moving = self._source.moving(t)
             gain = self._sway.at(t) * (1.0 - moving + moving * self._sway_in_motion.at(t))
             pose: Pose = self._source.sample(t) + gain * self._speech.sample(t)
+            look_gain = self._look_weight.at(t) * (1.0 - moving + moving * self._look_weight_in_motion.at(t))
+            pose[4:6] += look_gain * self._look.at(t)
             return pose
 
     def on_pose(self, callback: Callable[[Pose], None]) -> Callable[[Pose], None]:

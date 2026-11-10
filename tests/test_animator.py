@@ -129,6 +129,78 @@ def test_set_speech_sway_eases_to_the_new_gain() -> None:
     assert np.abs(np.diff(np.concatenate([before, after]))).max() <= np.abs(np.diff(full)).max() + 1e-3
 
 
+def _track(animator: Animator, now: list[float], targets: dict[float, float | None], end: float) -> np.ndarray:
+    """Tick to ``end``, calling ``look(yaw)`` at each target's time as a tracker would."""
+    poses = []
+    for k in range(int(end * FPS)):
+        t = k / FPS
+        for at in [at for at in targets if now[0] < at <= t]:
+            now[0] = at
+            yaw = targets[at]
+            animator.look(yaw, pitch=0.0 if yaw is None else -0.5 * yaw)
+        now[0] = t
+        poses.append(animator.tick(t))
+    return np.array(poses)
+
+
+def test_look_follows_a_jittery_tracker_smoothly_then_lets_go() -> None:
+    now = [0.0]
+    animator = Animator(idle=Still(), clock=lambda: now[0])
+    rng = np.random.default_rng(0)
+    targets: dict[float, float | None] = {k / 30 + rng.uniform(0, 0.01): 0.3 + rng.normal(0, 0.01) for k in range(60)}
+    targets[2.5] = None
+    poses = _track(animator, now, targets, 4.0)
+    np.testing.assert_allclose(poses[int(1.5 * FPS) : int(2.0 * FPS), 5], 0.3, atol=0.03)
+    np.testing.assert_allclose(poses[int(1.5 * FPS) : int(2.0 * FPS), 4], -0.15, atol=0.02)
+    np.testing.assert_allclose(poses[-1, 4:6], 0.0, atol=1e-3)
+    clean = Animator(idle=Still(), clock=lambda: 0.0)
+    clean.look(0.3, pitch=-0.15)
+    reference = np.diff(_run(clean, 0.0, 1.0)[:, 5])
+    # Fresh jittery targets 30 times a second move no faster and accelerate no harder than one clean target.
+    velocity = np.diff(poses[:, 5])
+    assert np.abs(velocity).max() < 1.1 * np.abs(reference).max()
+    assert np.abs(np.diff(velocity)).max() < 1.1 * np.abs(np.diff(reference)).max()
+
+
+def test_look_is_independent_of_the_tick_rate() -> None:
+    def yaw_every_100ms(fps: float) -> np.ndarray:
+        now = [0.0]
+        animator = Animator(fps=fps, idle=Still(), clock=lambda: now[0])
+        animator.look(0.4)
+        now[0] = 0.1
+        animator.look(-0.2)
+        return np.array([animator.tick(k / fps)[5] for k in range(int(2 * fps))])[:: int(fps / 10)]
+
+    np.testing.assert_allclose(yaw_every_100ms(30.0), yaw_every_100ms(120.0))
+
+
+def test_look_weight_scales_and_fades_during_a_motion() -> None:
+    def yaw(**options: float) -> np.ndarray:
+        now = [0.0]
+        animator = Animator(idle=Still(), blend_s=0.4, clock=lambda: now[0], **options)
+        animator.look(0.2)
+        animator.play(Hold("still", zero_pose(), 2.0))
+        return _run(animator, 0.0, 4.0)[:, 5]
+
+    full, half = yaw(look_weight_in_motion=1.0), yaw(look_weight=0.5, look_weight_in_motion=1.0)
+    np.testing.assert_allclose(half, 0.5 * full)
+    calm = yaw()  # half the look kept by default while a motion plays
+    np.testing.assert_allclose(calm[int(1.0 * FPS) : int(2.0 * FPS)], 0.1, atol=1e-3)
+    np.testing.assert_allclose(calm[int(3.0 * FPS) :], 0.2, atol=1e-3)
+
+
+def test_set_look_weight_eases_to_the_new_weight() -> None:
+    now = [0.0]
+    animator = Animator(idle=Still(), blend_s=0.4, clock=lambda: now[0])
+    animator.look(0.2)
+    before = _run(animator, 0.0, 1.0)[:, 5]
+    now[0] = 1.0
+    animator.set_look_weight(0.0)
+    after = _run(animator, 1.0, 2.0)[:, 5]
+    np.testing.assert_allclose(after[int(0.4 * FPS) :], 0.0)
+    assert np.abs(np.diff(np.concatenate([before, after]))).max() < 1.5 * 0.2 / (0.4 * FPS) + 1e-9
+
+
 @pytest.mark.parametrize("fps", [30.0, 60.0, 100.0])
 def test_clips_at_any_recorded_rate_play_in_real_time(fps: float) -> None:
     poses = np.zeros((26, 9))
