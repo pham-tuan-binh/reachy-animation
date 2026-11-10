@@ -220,7 +220,7 @@ Need something else, like procedural motion or a stream from a generator? Any ob
 
 | Call | When |
 |---|---|
-| `look(yaw, pitch)` | every time your tracker (face, sound source, ...) has a new direction, in radians |
+| `look(yaw, pitch)` | every time your tracker (face, sound source, ...) has a new direction, in radians: +yaw turns to the robot's left, +pitch looks down |
 | `look(None)` | the target is gone: ease back to the plain animation |
 
 The offset is added to the head's pitch and yaw on top of everything else, so breathing and speech sway keep
@@ -229,7 +229,8 @@ with a critically damped spring (half the remaining distance every `look_halflif
 
 Angles are relative to the **body**, not the camera. A camera in the head sees the target relative to where the
 head already points, so add the head's yaw and pitch at capture time before calling `look`, or the robot chases
-its own offset.
+its own offset. The SDK's `look_at_image(u, v, perform_movement=False)` does that conversion for a pixel, as in
+[`examples/look_at_faces.py`](examples/look_at_faces.py), which follows the biggest face the camera sees.
 
 `look_weight` scales the offset, and `look_weight_in_motion` is the fraction kept while a motion plays (half by
 default, so clips still read). Both can be changed live, easing over `blend_s`:
@@ -273,11 +274,12 @@ Animator(
 ```bash
 pip install "reachy-animation[sim] @ git+https://github.com/pham-tuan-binh/reachy-animation"
 python -m reachy_animation.sim --out demo.mp4 --duration 10 \
-    --speech speech.wav@1.0 --play cheerful1.json@2.5 --queue startled__0.json@3.0
+    --speech speech.wav@1.0 --play cheerful1.json@2.5 --queue startled__0.json@3.0 --look=30,-10@4.0
 ```
 
 This renders the official MuJoCo model with the SDK's IK, with the speech audio muxed in and a caption showing
-what's playing. On macOS, `say -o speech.wav --data-format=LEI16@24000 "Hi!"` makes a test WAV.
+what's playing. `--look=YAW,PITCH@T` (degrees, `--look=none@T` to let go) calls `look`; the `=` keeps a negative
+yaw from reading as a flag. On macOS, `say -o speech.wav --data-format=LEI16@24000 "Hi!"` makes a test WAV.
 
 **Not handled here: reachability.** Some library clips (e.g. `cheerful1`) ask for poses the robot can't
 reach. The sim, like the daemon, holds the last reachable pose. A real robot link should project poses first

@@ -1,6 +1,7 @@
 """Validate animation offline: script a scenario, tick the animator on simulated time, render it in MuJoCo.
 
   python -m reachy_animation.sim --out demo.mp4 --speech speech.wav@1.0 --play fear1.json@2.5 --queue x.json@3
+  python -m reachy_animation.sim --out look.mp4 --look 30,-10@1.0 --look none@3.0   # yaw,pitch in degrees
 
 Playback mirrors the SDK's MuJoCo backend: the SDK's analytical IK drives the Stewart platform, antennas are
 negated, and an unreachable pose holds the last reachable command like the daemon. Speech is fed in 100 ms
@@ -166,6 +167,16 @@ def _at(spec: str) -> tuple[str, float]:
     return path, float(at)
 
 
+def _look_at(spec: str) -> tuple[float | None, float, float]:
+    target, _, at = spec.rpartition("@")
+    if target == "none":
+        return None, 0.0, float(at)
+    yaw, sep, pitch = target.partition(",")
+    if not sep:
+        raise argparse.ArgumentTypeError(f"expected YAW,PITCH@SECONDS or none@SECONDS, got {spec!r}")
+    return float(yaw), float(pitch), float(at)
+
+
 def _caption(frame: NDArray[np.uint8], text: str) -> NDArray[np.uint8]:
     image = Image.fromarray(frame)
     draw = ImageDraw.Draw(image)
@@ -184,6 +195,9 @@ def main() -> None:
     parser.add_argument("--interrupt-speech", type=float, metavar="T", help="cut the speech at T")
     parser.add_argument("--play", type=_at, action="append", default=[], metavar="MOVE_JSON@T")
     parser.add_argument("--queue", type=_at, action="append", default=[], metavar="MOVE_JSON@T")
+    parser.add_argument(
+        "--look", type=_look_at, action="append", default=[], metavar="YAW,PITCH@T", help="degrees, or none@T"
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -210,19 +224,28 @@ def main() -> None:
         events.append((at, f"play {Path(path).stem}", partial(animator.play, Clip.load(path))))
     for path, at in args.queue:
         events.append((at, f"queue {Path(path).stem}", partial(animator.play, Clip.load(path), queue=True)))
+    for yaw, pitch, at in args.look:
+        if yaw is None:
+            events.append((at, "look away", partial(animator.look, None)))
+        else:
+            look = partial(animator.look, np.radians(yaw), np.radians(pitch))
+            events.append((at, f"look {yaw:+.0f},{pitch:+.0f} deg", look))
     events.sort(key=lambda e: e[0])
 
     poses, captions = [], []
+    looking = ""
     for k in range(round(args.duration * args.fps)):
         now = k / args.fps
         while events and events[0][0] <= now:
             _, label, fire = events.pop(0)
             fire()
+            if label.startswith("look"):
+                looking = "" if label == "look away" else f"  {label}"
             if label:
                 logger.info("%5.2fs %s", now, label)
         poses.append(animator.tick(now))
         playing = animator.playing
-        captions.append(f"{now:5.2f}s  {playing.name if playing else 'idle'}")
+        captions.append(f"{now:5.2f}s  {playing.name if playing else 'idle'}{looking}")
 
     frames = Sim(args.fps).render(np.array(poses))
     write_video([_caption(f, c) for f, c in zip(frames, captions)], args.out, args.fps, audio, sample_rate)
